@@ -1,0 +1,47 @@
+name: Nix
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Inspect contribution
+        run: |
+          git status --short --branch
+          git diff --check origin/main...HEAD
+          git diff --stat origin/main...HEAD
+
+      - uses: cachix/install-nix-action@v31
+
+      - name: Show flake outputs
+        run: nix flake show
+
+      - name: Check platform topology
+        run: |
+          test "$(nix eval --json .#checks.aarch64-darwin --apply 'checks: builtins.attrNames checks')" = '["package-help"]'
+          nix eval --raw .#checks.aarch64-linux.module-evaluation.drvPath >/dev/null
+
+      - name: Build package
+        run: nix build .#zooid --print-build-logs
+
+      - name: Check installed CLI
+        run: ./result/bin/zooid --help
+
+      - name: Check flake
+        run: nix flake check --print-build-logs
