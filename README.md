@@ -109,6 +109,56 @@ extensions already in that directory.
 
 The persona — `CLAUDE.md` / `AGENTS.md`, `.claude/settings.json`, skills, MCP servers — lives in the agent's `workdir` on the host. Zooid bind-mounts that directory into the container at runtime, so the shim picks it up the same way it would on your laptop. No `docker build`, no custom image, no rebuild when you tweak instructions.
 
+## NixOS
+
+The repository flake exports both `packages.<system>.zooid` and
+`nixosModules.default`. The module realizes the Zooid service, but host
+capabilities stay under host control:
+
+```nix
+{
+  inputs.zooid.url = "github:zooid-ai/zooid";
+
+  outputs = { nixpkgs, zooid, ... }: {
+    nixosConfigurations.my-host = nixpkgs.lib.nixosSystem {
+      system = "x86_64-linux";
+      modules = [
+        zooid.nixosModules.default
+        ({ pkgs, ... }: {
+          services.zooid = {
+            enable = true;
+            runtime = "docker";
+            containerEngine.package = pkgs.docker-client;
+            configDirectory = "/etc/zooid";
+            environmentFiles = [
+              "/run/secrets/zooid.env"
+            ];
+          };
+
+          # Host authority is intentionally separate from the Zooid module.
+          virtualisation.docker.enable = true;
+
+          # Add this only when this host's Docker policy requires socket-group access.
+          users.users.zooid.extraGroups = [ "docker" ];
+        })
+      ];
+    };
+  };
+}
+```
+
+`services.zooid.containerEngine.package` selects the client executable Zooid
+will validate and use. It does **not** enable or configure Docker/Podman, create
+a socket, or grant the Zooid user access to one. Those remain host decisions.
+A rootless, remote, or otherwise externally managed provider is equally valid
+when the Zooid service user can use the selected client; connection variables
+such as `DOCKER_HOST` may be supplied through an externally provisioned
+`environmentFiles` entry.
+
+The module runs from `configDirectory` and lets Zooid discover and validate
+`zooid.yaml` itself. Environment files are consumed by systemd and should be
+provisioned outside the Nix store when they contain credentials.
+
 ## Development
 
 ```bash
